@@ -1,45 +1,49 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-import json
-import os
-from utils import fetch_latest_video
-
-CONFIG_FILE = "config.json"
+from utils.youtube import fetch_latest_video
 
 class NotifyLatest(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="notify_latest", description="最新のYouTube動画を通知します（手動）")
+    @app_commands.command(name="notify_latest", description="最新のYouTube動画を通知します")
     async def notify_latest(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-
-        guild_id = str(interaction.guild_id)
-
-        # config.json 読み込み
-        if not os.path.exists(CONFIG_FILE):
-            await interaction.followup.send("⚠ 設定ファイルが見つかりません。先に /subscribe を実行してください。", ephemeral=True)
+        # 特定のユーザーだけが使えるように制限
+        if interaction.user.id != 1105948117624434728:
+            await interaction.response.send_message("このコマンドは開発者のみ使用できます。", ephemeral=True)
             return
 
-        with open(CONFIG_FILE, "r") as f:
+        await interaction.response.defer(ephemeral=False, thinking=True)
+
+        with open("config.json", "r", encoding="utf-8") as f:
             config = json.load(f)
 
-        if guild_id not in config:
-            await interaction.followup.send("⚠ このサーバーにはまだ通知設定がありません。/subscribe で登録してください。", ephemeral=True)
+        if str(interaction.guild_id) not in config:
+            await interaction.followup.send("このサーバーはまだ `/subscribe` で登録されていません。")
             return
 
-        channel_id = int(config[guild_id]["channel_id"])
-        youtube_channel_id = config[guild_id]["youtube_channel_id"]
+        youtube_channel_id = config[str(interaction.guild_id)]["youtube_channel_id"]
+        notify_channel_id = config[str(interaction.guild_id)]["notify_channel_id"]
 
-        video = fetch_latest_video(youtube_channel_id)
-        if not video:
-            await interaction.followup.send("⚠ 最新動画の取得に失敗しました。", ephemeral=True)
+        latest_video = fetch_latest_video(youtube_channel_id)
+        if not latest_video:
+            await interaction.followup.send("最新動画の取得に失敗しました。")
             return
 
-        channel = self.bot.get_channel(channel_id)
-        if channel:
-            await channel.send(f"📺 新しい動画が投稿されました！\n{video['title']}\n{video['url']}")
-            await interaction.followup.send("✅ 通知を送信しました。", ephemeral=True)
+        channel = self.bot.get_channel(int(notify_channel_id))
+        if not channel:
+            await interaction.followup.send("通知先チャンネルが見つかりません。")
+            return
+
+        if latest_video["is_live"]:
+            message = f"🔴 **ライブ配信が始まりました！**\n**{latest_video['title']}**\n{latest_video['url']}\n開始時刻: <t:{latest_video['published_at_ts']}:F>"
         else:
-            await interaction.followup.send("⚠ 通知先チャンネルが見つかりません。", ephemeral=True)
+            message = f"🆕 **新しい動画が投稿されました！**\n**{latest_video['title']}**\n{latest_video['url']}"
+
+        await channel.send(message)
+        await interaction.followup.send("最新動画を通知しました！")
+
+async def setup(bot):
+    await bot.add_cog(NotifyLatest(bot))
+
